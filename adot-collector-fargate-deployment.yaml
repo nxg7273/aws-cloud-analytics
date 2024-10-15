@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adot-collector-fargate
+  namespace: adot-col-fargate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: adot-collector-fargate
+  template:
+    metadata:
+      labels:
+        app: adot-collector-fargate
+    spec:
+      containers:
+      - name: adot-collector
+        image: public.ecr.aws/aws-observability/aws-otel-collector:v0.41.0
+        command:
+          - "/awscollector"
+          - "--config=/conf/adot-collector-config.yaml"
+        env:
+        - name: AWS_REGION
+          value: "us-east-1"
+        - name: CLUSTER_NAME
+          value: "protein-engineering-cluster-new"
+        volumeMounts:
+        - name: adot-collector-config
+          mountPath: /conf
+      volumes:
+      - name: adot-collector-config
+        configMap:
+          name: adot-collector-fargate-config
+          items:
+          - key: adot-collector-config
+            path: adot-collector-config.yaml

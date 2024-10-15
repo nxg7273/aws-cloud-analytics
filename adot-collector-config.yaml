@@ -1,0 +1,59 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: my-collector
+  namespace: aws-otel-eks
+spec:
+  mode: deployment
+  serviceAccount: aws-otel-sa
+  config: |
+    receivers:
+      kubeletstats:
+        collection_interval: 60s
+        auth_type: "serviceAccount"
+        endpoint: "${K8S_NODE_NAME}:10250"
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: 'kubernetes-pods'
+              kubernetes_sd_configs:
+                - role: pod
+              relabel_configs:
+                - action: keep
+                  regex: true
+                  source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+
+    processors:
+      batch:
+      filter:
+        metrics:
+          include:
+            match_type: regexp
+            metric_names:
+              - .*cpu.*
+              - .*memory.*
+              - k8s.pod.name
+              - k8s.service.name
+
+    exporters:
+      awsemf:
+        region: 'us-east-1'
+        namespace: 'EKS/ContainerInsights'
+        log_group_name: '/aws/containerinsights/protein-engineering-cluster-new/performance'
+        dimension_rollup_option: NoDimensionRollup
+        metric_declarations:
+          - dimensions: [[PodName, Namespace, ClusterName]]
+            metric_name_selectors:
+              - k8s.pod.cpu.utilization
+              - k8s.pod.memory.utilization
+          - dimensions: [[Service, Namespace, ClusterName]]
+            metric_name_selectors:
+              - k8s.service.cpu.utilization
+              - k8s.service.memory.utilization
+
+    service:
+      pipelines:
+        metrics:
+          receivers: [kubeletstats, prometheus]
+          processors: [batch, filter]
+          exporters: [awsemf]
