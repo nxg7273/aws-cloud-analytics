@@ -12,7 +12,8 @@ fi
 # Default values for other variables
 REGION="${REGION:-us-east-1}"
 SERVICE_ACCOUNT_NAME="adot-collector-script"
-SERVICE_ACCOUNT_NAMESPACE="bioapptives"
+SERVICE_ACCOUNT_NAMESPACE="fargate-container-insights"
+MONITORED_NAMESPACE="bioapptives"
 SERVICE_ACCOUNT_IAM_ROLE="adot-collector-script-role"
 POLICY_NAME="ADOTCollectorScriptPolicy"
 SNS_TOPIC_NAME="bioapptives-alerts-script"
@@ -90,6 +91,7 @@ echo "Cleanup completed."
 
 # Create namespace if it doesn't exist
 kubectl create namespace $SERVICE_ACCOUNT_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace $MONITORED_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
 
 # Create SNS topic for notifications
 echo "Creating SNS topic for notifications..."
@@ -122,6 +124,11 @@ cat << EOF > /tmp/adot-collector-policy.json
                 "logs:CreateLogStream",
                 "logs:PutLogEvents",
                 "logs:DescribeLogStreams",
+                "logs:DescribeLogGroups",
+                "logs:CreateLogDelivery",
+                "logs:GetLogDelivery",
+                "logs:ListLogDeliveries",
+                "logs:PutResourcePolicy",
                 "sns:Publish"
             ],
             "Resource": "*"
@@ -160,6 +167,7 @@ aws cloudwatch put-metric-alarm \
     --alarm-description "Alert for OperationalError in bioapptives-worker" \
     --metric-name "ErrorCount" \
     --namespace "BioapptivesErrors" \
+    --dimensions Name=Namespace,Value=bioapptives Name=ErrorType,Value=OperationalError \
     --statistic "Sum" \
     --period 300 \
     --threshold 1 \
@@ -174,6 +182,7 @@ aws cloudwatch put-metric-alarm \
     --alarm-description "Alert for Connection Reset errors in bioapptives-worker" \
     --metric-name "ConnectionErrorCount" \
     --namespace "BioapptivesErrors" \
+    --dimensions Name=Namespace,Value=bioapptives Name=ErrorType,Value=ConnectionError \
     --statistic "Sum" \
     --period 300 \
     --threshold 1 \

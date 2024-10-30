@@ -2,10 +2,10 @@ apiVersion: opentelemetry.io/v1alpha1
 kind: OpenTelemetryCollector
 metadata:
   name: adot-collector
-  namespace: bioapptives
+  namespace: fargate-container-insights
 spec:
   mode: deployment
-  serviceAccount: adot-collector
+  serviceAccount: adot-collector-script
   config: |
     receivers:
       filelog:
@@ -14,7 +14,7 @@ spec:
         include_file_path: true
         operators:
           - type: regex_parser
-            regex: '(?P<error>.*(?:OperationalError|Connection reset by peer|Name or service not known).*)'
+            regex: '(?P<error>.*(?:kombu\.exceptions\.OperationalError: \[Errno -2\] Name or service not known|Cannot connect to amqp://guest:\*\*@rabbitmq-0\.rabbitmq\.bioapptives\.svc\.cluster\.local:5672//|Connection reset by peer).*)'
             timestamp:
               parse_from: attributes.time
               layout: '%Y-%m-%d %H:%M:%S.%L'
@@ -28,12 +28,12 @@ spec:
         logs:
           include:
             match_type: regexp
-            logs_pattern: ".*(OperationalError|Connection reset by peer|Name or service not known).*"
+            logs_pattern: ".*(kombu\\.exceptions\\.OperationalError: \\[Errno -2\\] Name or service not known|Cannot connect to amqp://guest:\\*\\*@rabbitmq-0\\.rabbitmq\\.bioapptives\\.svc\\.cluster\\.local:5672//|Connection reset by peer).*"
 
     exporters:
       awscloudwatch:
         region: '${AWS_REGION}'
-        log_group_name: '/aws/eks/bioapptives'
+        log_group_name: '/aws/eks/fargate-container-insights/bioapptives'
         log_stream_name: '${POD_NAME}'
         dimension_rollup_option: NoDimensionRollup
         namespace: BioapptivesErrors
@@ -44,12 +44,16 @@ spec:
             dimensions:
               - name: ErrorType
                 value: OperationalError
+              - name: Namespace
+                value: bioapptives
           - name: ConnectionErrorCount
             unit: Count
             value: 1
             dimensions:
               - name: ErrorType
                 value: ConnectionError
+              - name: Namespace
+                value: bioapptives
 
     service:
       pipelines:
