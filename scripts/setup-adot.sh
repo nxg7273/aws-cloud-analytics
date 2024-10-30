@@ -3,9 +3,14 @@
 # Exit on any error
 set -e
 
-# Default values
-CLUSTER_NAME="my-cluster"
-REGION="us-east-1"
+# Required environment variables
+if [ -z "$CLUSTER_NAME" ]; then
+    echo "Error: CLUSTER_NAME environment variable is required"
+    exit 1
+fi
+
+# Default values for other variables
+REGION="${REGION:-us-east-1}"
 SERVICE_ACCOUNT_NAME="adot-collector"
 SERVICE_ACCOUNT_NAMESPACE="bioapptives"
 SERVICE_ACCOUNT_IAM_ROLE="adot-collector-role"

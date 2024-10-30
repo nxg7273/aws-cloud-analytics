@@ -39,8 +39,8 @@ This project sets up a detailed tracking system for monitoring metrics of all po
    chmod +x scripts/setup-adot.sh
 
    # Set required environment variables
-   export CLUSTER_NAME="my-cluster"
-   export REGION="us-east-1"
+   export CLUSTER_NAME="your-cluster-name"  # Required: Set this to your EKS cluster name
+   export REGION="us-east-1"                # Optional: Defaults to us-east-1
 
    # Run the setup script
    ./scripts/setup-adot.sh
