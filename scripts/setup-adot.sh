@@ -1,203 +1,77 @@
 #!/bin/bash
 
-# Exit on any error
-set -e
+# Default values
+CLUSTER_NAME=${CLUSTER_NAME:-"my-cluster"}
+REGION=${AWS_REGION:-"us-east-1"}
+EMAIL=${NOTIFICATION_EMAIL:-"anastasia.nayden@iff.com"}
 
-# Required environment variables
-if [ -z "$CLUSTER_NAME" ]; then
-    echo "Error: CLUSTER_NAME environment variable is required"
+# Function to check required environment variables
+check_env_vars() {
+  if [[ -z "${AWS_ACCESS_KEY_ID}" || -z "${AWS_SECRET_ACCESS_KEY}" ]]; then
+    echo "Error: AWS credentials not set. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
     exit 1
-fi
-
-# Default values for other variables
-REGION="${REGION:-us-east-1}"
-SERVICE_ACCOUNT_NAME="adot-collector-script"
-SERVICE_ACCOUNT_NAMESPACE="fargate-container-insights"
-MONITORED_NAMESPACE="bioapptives"
-SERVICE_ACCOUNT_IAM_ROLE="adot-collector-script-role"
-POLICY_NAME="ADOTCollectorScriptPolicy"
-SNS_TOPIC_NAME="bioapptives-alerts-script"
-ALARM_PREFIX="Script-Bioapptives"
-
-# Get script directory for relative paths
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
-
-# Function to check if resource is Terraform managed
-is_terraform_managed() {
-    local resource_arn=$1
-    local tags=$(aws iam list-role-tags --role-name "${resource_arn##*/}" 2>/dev/null || echo '{"Tags": []}')
-    echo "$tags" | grep -q "Terraform" && return 0 || return 1
+  fi
 }
 
-# Function to delete existing IAM service account
-delete_service_account() {
-    echo "Deleting existing IAM service account..."
-    eksctl delete iamserviceaccount \
-        --cluster=$CLUSTER_NAME \
-        --region=$REGION \
-        --name=$SERVICE_ACCOUNT_NAME \
-        --namespace=$SERVICE_ACCOUNT_NAMESPACE || true
+# Function to create Fargate profiles
+create_fargate_profiles() {
+  echo "Creating Fargate profiles..."
+  eksctl create fargateprofile \
+    --cluster ${CLUSTER_NAME} \
+    --name fp-adot-collector \
+    --namespace fargate-container-insights \
+    --region ${REGION} || true
+
+  eksctl create fargateprofile \
+    --cluster ${CLUSTER_NAME} \
+    --name fp-bioapptives \
+    --namespace bioapptives \
+    --region ${REGION} || true
 }
 
-# Function to delete existing IAM policy
-delete_iam_policy() {
-    echo "Deleting existing IAM policy..."
-    EXISTING_POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName=='$POLICY_NAME'].Arn" --output text)
-    if [ ! -z "$EXISTING_POLICY_ARN" ]; then
-        if ! is_terraform_managed "$EXISTING_POLICY_ARN"; then
-            # List and detach all role attachments
-            echo "Detaching policy from attached roles..."
-            ATTACHED_ROLES=$(aws iam list-entities-for-policy --policy-arn $EXISTING_POLICY_ARN --entity-filter Role --query 'PolicyRoles[*].RoleName' --output text)
-            for role in $ATTACHED_ROLES; do
-                echo "Detaching policy from role: $role"
-                aws iam detach-role-policy --role-name $role --policy-arn $EXISTING_POLICY_ARN || true
-            done
-            # Delete the policy after detaching
-            aws iam delete-policy --policy-arn $EXISTING_POLICY_ARN || true
-        else
-            echo "Skipping deletion of Terraform-managed policy: $EXISTING_POLICY_ARN"
-        fi
-    fi
+# Function to setup ADOT collector
+setup_adot_collector() {
+  echo "Setting up ADOT collector..."
+  kubectl apply -f kubernetes/cluster-info-configmap.yaml
+  kubectl apply -f kubernetes/adot-collector-config.yaml
+  kubectl apply -f kubernetes/adot-collector-deployment.yaml
 }
 
-# Function to delete existing SNS topic
-delete_sns_topic() {
-    echo "Deleting existing SNS topic..."
-    EXISTING_TOPIC_ARN=$(aws sns list-topics --region $REGION --query "Topics[?contains(TopicArn, '$SNS_TOPIC_NAME')].TopicArn" --output text)
-    if [ ! -z "$EXISTING_TOPIC_ARN" ]; then
-        local tags=$(aws sns list-tags-for-resource --resource-arn $EXISTING_TOPIC_ARN --region $REGION 2>/dev/null || echo '{"Tags": []}')
-        if ! echo "$tags" | grep -q "Terraform"; then
-            aws sns delete-topic --topic-arn $EXISTING_TOPIC_ARN --region $REGION || true
-        else
-            echo "Skipping deletion of Terraform-managed SNS topic: $EXISTING_TOPIC_ARN"
-        fi
-    fi
-}
-
-# Function to delete existing CloudWatch alarms
-delete_cloudwatch_alarms() {
-    echo "Deleting existing CloudWatch alarms..."
-    local alarms=("${ALARM_PREFIX}OperationalError" "${ALARM_PREFIX}ConnectionError")
-    for alarm in "${alarms[@]}"; do
-        local tags=$(aws cloudwatch list-tags-for-resource --resource-arn "arn:aws:cloudwatch:${REGION}:$(aws sts get-caller-identity --query Account --output text):alarm:${alarm}" 2>/dev/null || echo '{"Tags": []}')
-        if ! echo "$tags" | grep -q "Terraform"; then
-            aws cloudwatch delete-alarms --alarm-names "$alarm" --region $REGION || true
-        else
-            echo "Skipping deletion of Terraform-managed alarm: $alarm"
-        fi
-    done
-}
-
-# Clean up existing resources
-echo "Starting cleanup of existing resources..."
-delete_service_account
-delete_iam_policy
-delete_sns_topic
-delete_cloudwatch_alarms
-echo "Cleanup completed."
-
-# Create namespace if it doesn't exist
-kubectl create namespace $SERVICE_ACCOUNT_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace $MONITORED_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
-
-# Create SNS topic for notifications
-echo "Creating SNS topic for notifications..."
-SNS_TOPIC_ARN=$(aws sns create-topic --name $SNS_TOPIC_NAME --region $REGION --tags Key=ManagedBy,Value=Script --output text --query 'TopicArn')
-aws sns subscribe \
-    --topic-arn $SNS_TOPIC_ARN \
+# Function to setup monitoring
+setup_monitoring() {
+  echo "Setting up monitoring..."
+  SNS_TOPIC_ARN=$(aws sns create-topic --name adot-alerts --output json | jq -r '.TopicArn')
+  aws sns subscribe \
+    --topic-arn ${SNS_TOPIC_ARN} \
     --protocol email \
-    --notification-endpoint "anastasia.nayden@iff.com" \
-    --region $REGION
+    --notification-endpoint ${EMAIL}
 
-# Install ADOT Operator
-echo "Installing ADOT Operator..."
-kubectl apply -f https://amazon-eks.s3.amazonaws.com/docs/addons-otel-permissions.yaml
+  aws logs create-log-group --log-group-name "/aws/eks/${CLUSTER_NAME}/bioapptives" || true
 
-# Create IAM policy for ADOT Collector
-echo "Creating IAM policy for ADOT Collector..."
-cat << EOF > /tmp/adot-collector-policy.json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "cloudwatch:PutMetricData",
-                "cloudwatch:GetMetricData",
-                "cloudwatch:PutMetricAlarm",
-                "cloudwatch:DescribeAlarms",
-                "cloudwatch:DeleteAlarms",
-                "logs:CreateLogGroup",
-                "logs:CreateLogStream",
-                "logs:PutLogEvents",
-                "logs:DescribeLogStreams",
-                "logs:DescribeLogGroups",
-                "logs:CreateLogDelivery",
-                "logs:GetLogDelivery",
-                "logs:ListLogDeliveries",
-                "logs:PutResourcePolicy",
-                "sns:Publish"
-            ],
-            "Resource": "*"
-        }
-    ]
-}
-EOF
+  aws logs put-metric-filter \
+    --log-group-name "/aws/eks/${CLUSTER_NAME}/bioapptives" \
+    --filter-name "ErrorFilter" \
+    --filter-pattern "?OperationalError ?\"Name or service not known\" ?\"Connection reset by peer\"" \
+    --metric-transformations \
+      metricName=ErrorCount,metricNamespace=Bioapptives,metricValue=1,defaultValue=0
 
-POLICY_ARN=$(aws iam create-policy \
-    --policy-name $POLICY_NAME \
-    --policy-document file:///tmp/adot-collector-policy.json \
-    --tags Key=ManagedBy,Value=Script \
-    --query 'Policy.Arn' \
-    --output text)
-
-# Create service account with eksctl
-echo "Creating service account with eksctl..."
-eksctl create iamserviceaccount \
-    --cluster=$CLUSTER_NAME \
-    --region=$REGION \
-    --name=$SERVICE_ACCOUNT_NAME \
-    --namespace=$SERVICE_ACCOUNT_NAMESPACE \
-    --role-name=$SERVICE_ACCOUNT_IAM_ROLE \
-    --attach-policy-arn=$POLICY_ARN \
-    --override-existing-serviceaccounts \
-    --approve
-
-# Apply ADOT Collector configuration
-echo "Applying ADOT Collector configuration..."
-kubectl apply -f "${REPO_ROOT}/kubernetes/adot-collector-config.yaml"
-
-# Create CloudWatch alarms for specific error patterns
-echo "Creating CloudWatch alarms..."
-aws cloudwatch put-metric-alarm \
-    --alarm-name "${ALARM_PREFIX}OperationalError" \
-    --alarm-description "Alert for OperationalError in bioapptives-worker" \
+  aws cloudwatch put-metric-alarm \
+    --alarm-name "BioapptivesErrorAlarm" \
+    --alarm-description "Alert on application errors in bioapptives namespace" \
     --metric-name "ErrorCount" \
-    --namespace "BioapptivesErrors" \
-    --dimensions Name=Namespace,Value=bioapptives Name=ErrorType,Value=OperationalError \
-    --statistic "Sum" \
+    --namespace "Bioapptives" \
+    --statistic Sum \
     --period 300 \
     --threshold 1 \
-    --comparison-operator GreaterThanThreshold \
+    --comparison-operator GreaterThanOrEqualToThreshold \
     --evaluation-periods 1 \
-    --alarm-actions $SNS_TOPIC_ARN \
-    --tags Key=ManagedBy,Value=Script \
-    --region $REGION
+    --alarm-actions ${SNS_TOPIC_ARN}
+}
 
-aws cloudwatch put-metric-alarm \
-    --alarm-name "${ALARM_PREFIX}ConnectionError" \
-    --alarm-description "Alert for Connection Reset errors in bioapptives-worker" \
-    --metric-name "ConnectionErrorCount" \
-    --namespace "BioapptivesErrors" \
-    --dimensions Name=Namespace,Value=bioapptives Name=ErrorType,Value=ConnectionError \
-    --statistic "Sum" \
-    --period 300 \
-    --threshold 1 \
-    --comparison-operator GreaterThanThreshold \
-    --evaluation-periods 1 \
-    --alarm-actions $SNS_TOPIC_ARN \
-    --tags Key=ManagedBy,Value=Script \
-    --region $REGION
+# Main execution
+check_env_vars
+create_fargate_profiles
+setup_adot_collector
+setup_monitoring
 
-echo "ADOT setup completed successfully!"
+echo "Setup complete. Please check your email to confirm the SNS subscription."
