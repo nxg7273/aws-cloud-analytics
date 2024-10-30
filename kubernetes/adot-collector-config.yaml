@@ -1,0 +1,59 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: adot-collector
+  namespace: bioapptives
+spec:
+  mode: deployment
+  serviceAccount: adot-collector
+  config: |
+    receivers:
+      filelog:
+        include: [ /var/log/containers/*bioapptives*.log ]
+        start_at: beginning
+        include_file_path: true
+        operators:
+          - type: regex_parser
+            regex: '(?P<error>.*(?:OperationalError|Connection reset by peer|Name or service not known).*)'
+            timestamp:
+              parse_from: attributes.time
+              layout: '%Y-%m-%d %H:%M:%S.%L'
+
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 1024
+
+      filter:
+        logs:
+          include:
+            match_type: regexp
+            logs_pattern: ".*(OperationalError|Connection reset by peer|Name or service not known).*"
+
+    exporters:
+      awscloudwatch:
+        region: '${AWS_REGION}'
+        log_group_name: '/aws/eks/bioapptives'
+        log_stream_name: '${POD_NAME}'
+        dimension_rollup_option: NoDimensionRollup
+        namespace: BioapptivesErrors
+        metrics:
+          - name: ErrorCount
+            unit: Count
+            value: 1
+            dimensions:
+              - name: ErrorType
+                value: OperationalError
+          - name: ConnectionErrorCount
+            unit: Count
+            value: 1
+            dimensions:
+              - name: ErrorType
+                value: ConnectionError
+
+    service:
+      pipelines:
+        logs:
+          receivers: [filelog]
+          processors: [batch, filter]
+          exporters: [awscloudwatch]

@@ -33,16 +33,27 @@ This project sets up a detailed tracking system for monitoring metrics of all po
    aws eks --region $(terraform output -raw region) update-kubeconfig --name $(terraform output -raw cluster_name)
    ```
 
-5. Deploy ADOT Collector:
-   ```
-   kubectl apply -f kubernetes/adot-collector.yaml
+5. Deploy ADOT Collector for bioapptives namespace:
+   ```bash
+   # Make the setup script executable
+   chmod +x scripts/setup-adot.sh
+
+   # Set required environment variables
+   export CLUSTER_NAME="my-cluster"
+   export REGION="us-east-1"
+
+   # Run the setup script
+   ./scripts/setup-adot.sh
    ```
 
 6. Verify deployment:
+   ```bash
+   kubectl get pods -n bioapptives
+   kubectl get services -n bioapptives
    ```
-   kubectl get pods -n adot-col-fargate
-   kubectl get services -n adot-col-fargate
-   ```
+
+7. Confirm SNS subscription:
+   Check your email (anastasia.nayden@iff.com) for the SNS subscription confirmation.
 
 ## Dashboard Usage Guide
 
@@ -95,10 +106,20 @@ If you encounter issues, please check the following:
    Check if the cluster is active and properly configured.
 
 4. ADOT Collector Logs:
-   ```
-   kubectl logs -l app=adot-collector -n adot-col-fargate
-   ```
-   Look for any error messages or configuration issues.
+    ```bash
+    kubectl logs -l app=adot-collector -n bioapptives
+    ```
+    Look for any error messages or configuration issues in the logs.
+
+    To verify error pattern monitoring:
+    ```bash
+    # Check CloudWatch alarms status
+    aws cloudwatch describe-alarms \
+      --alarm-names BioapptivesOperationalError BioapptivesConnectionError
+
+    # Check SNS subscriptions
+    aws sns list-subscriptions
+    ```
 
 5. CloudWatch Logs:
    - Check the CloudWatch Log groups for any error messages
@@ -117,8 +138,17 @@ For more detailed troubleshooting, refer to the AWS EKS and ADOT documentation.
    - Regularly update the ADOT Collector to the latest version
 
 2. Monitoring and Alerting:
-   - Set up CloudWatch Alarms for critical metrics (e.g., high CPU/memory usage)
-   - Use AWS SNS to receive notifications for alarm states
+    - CloudWatch Alarms are configured for specific error patterns in bioapptives namespace:
+      - OperationalError monitoring
+      - Connection reset errors
+      - AMQP connection issues
+    - SNS notifications are sent to anastasia.nayden@iff.com
+    - Error patterns monitored include:
+      ```
+      kombu.exceptions.OperationalError: [Errno -2] Name or service not known
+      consumer: Cannot connect to amqp://guest:**@rabbitmq-0.rabbitmq.bioapptives.svc.cluster.local:5672//
+      ConnectionError due to connection reset by peer
+      ```
 
 3. Cost Optimization:
    - Regularly review and optimize your EKS cluster size
