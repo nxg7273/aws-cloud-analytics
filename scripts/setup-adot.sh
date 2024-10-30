@@ -18,6 +18,10 @@ POLICY_NAME="ADOTCollectorScriptPolicy"
 SNS_TOPIC_NAME="bioapptives-alerts-script"
 ALARM_PREFIX="Script-Bioapptives"
 
+# Get script directory for relative paths
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
 # Function to check if resource is Terraform managed
 is_terraform_managed() {
     local resource_arn=$1
@@ -147,7 +151,7 @@ eksctl create iamserviceaccount \
 
 # Apply ADOT Collector configuration
 echo "Applying ADOT Collector configuration..."
-kubectl apply -f ../kubernetes/adot-collector-config.yaml
+kubectl apply -f "${REPO_ROOT}/kubernetes/adot-collector-config.yaml"
 
 # Create CloudWatch alarms for specific error patterns
 echo "Creating CloudWatch alarms..."
