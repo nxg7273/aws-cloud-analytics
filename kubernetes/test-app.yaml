@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app
+  namespace: bioapptives
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-app
+  template:
+    metadata:
+      labels:
+        app: test-app
+    spec:
+      containers:
+      - name: test-container
+        image: busybox
+        command: ["/bin/sh"]
+        args:
+          - "-c"
+          - |
+            while true; do
+              echo "Test log: OperationalError [Errno -2] Name or service not known"
+              echo "Test log: consumer: Cannot connect to amqp://guest:**@rabbitmq-0.rabbitmq.bioapptives.svc.cluster.local:5672//"
+              echo "Test log: ConnectionError due to connection reset by peer"
+              sleep 30
+            done
+      - name: fluent-bit
+        image: public.ecr.aws/aws-observability/aws-for-fluent-bit:latest
+        env:
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: cluster-info
+              key: aws_region
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: config
+          mountPath: /fluent-bit/etc/
+      volumes:
+      - name: varlog
+        emptyDir: {}
+      - name: config
+        configMap:
+          name: fluent-bit-config

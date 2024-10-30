@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adot-collector
+  namespace: fargate-container-insights
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: adot-collector
+  template:
+    metadata:
+      labels:
+        app: adot-collector
+    spec:
+      serviceAccountName: adot-collector
+      containers:
+      - name: adot-collector
+        image: public.ecr.aws/aws-observability/aws-otel-collector:v0.32.0
+        command:
+          - "/awscollector"
+        args:
+          - "--config=/etc/collector/collector.yaml"
+        env:
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: cluster-info
+              key: aws_region
+        - name: CLUSTER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cluster-info
+              key: cluster_name
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        ports:
+        - containerPort: 4317
+        - containerPort: 4318
+        volumeMounts:
+          - name: collector-config
+            mountPath: /etc/collector
+      volumes:
+        - name: collector-config
+          configMap:
+            name: adot-collector-config

@@ -1,17 +1,10 @@
-apiVersion: opentelemetry.io/v1alpha1
-kind: OpenTelemetryCollector
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: adot
+  name: adot-collector-config
   namespace: fargate-container-insights
-spec:
-  mode: deployment
-  serviceAccount: adot-collector
-  podAnnotations:
-    eks.amazonaws.com/fargate-profile: fargate-container-insights
-  env:
-    - name: AWS_REGION
-      value: "us-east-1"
-  config: |
+data:
+  collector.yaml: |
     receivers:
       otlp:
         protocols:
@@ -19,139 +12,28 @@ spec:
             endpoint: "0.0.0.0:4317"
           http:
             endpoint: "0.0.0.0:4318"
-      filelog:
-        include: [ /var/log/containers/*_bioapptives_*.log ]
-        exclude: [ ]
-        start_at: beginning
-        include_file_path: true
-        include_file_name: true
-        operators:
-          - type: json_parser
-            timestamp:
-              parse_from: time
-              layout: '%Y-%m-%dT%H:%M:%S.%LZ'
     processors:
-      filter:
-        logs:
-          include:
-            match_type: regexp
-            regexp:
-              - 'kombu\.exceptions\.OperationalError: \[Errno -2\] Name or service not known'
-              - 'consumer: Cannot connect to amqp://guest:\*\*@rabbitmq-0\.rabbitmq\.bioapptives\.svc\.cluster\.local:5672//'
-              - 'Connection reset by peer'
-              - 'OperationalError'
       batch:
         timeout: 1s
         send_batch_size: 1024
+      filter:
+        logs:
+          strict_match: false
+          include:
+            match_type: regexp
+            expressions:
+              - value: ".*(OperationalError|Name or service not known|Connection reset by peer).*"
     exporters:
-      awscloudwatchlogs:
-        log_group_name: "/aws/eks/bioapptives"
-        log_stream_name: "adot-collector-logs"
-        region: "us-east-1"
       awsemf:
-        region: 'us-east-1'
-        log_group_name: "/aws/containerinsights/my-cluster/performance"
-        log_stream_name: "adot-collector-metrics"
-      awssnstopic:
-        topic: "arn:aws:sns:us-east-1:418241445641:bioapptives-alerts"
-        region: "us-east-1"
-        subject: "EKS Bioapptives Error Alert"
-        message_attributes:
-          ErrorType:
-            data_type: String
-            value: "ApplicationError"
+        region: ''
+        log_group_name: '/aws/eks//bioapptives'
+        log_stream_name: ''
+        namespace: 'Bioapptives'
+        dimension_rollup_option: NoDimensionRollup
+        log_retention: 30
     service:
       pipelines:
         logs:
-          receivers: [otlp, filelog]
-          processors: [filter, batch]
-          exporters: [awscloudwatchlogs, awssnstopic]
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: fluent-bit-config
-  namespace: fargate-container-insights
-data:
-  fluent-bit.conf: |
-    [SERVICE]
-        Parsers_File parsers.conf
-        HTTP_Server On
-        HTTP_Listen 0.0.0.0
-        HTTP_Port 2020
-
-    [INPUT]
-        Name tail
-        Path /var/log/containers/*_bioapptives_*.log
-        Parser docker
-        Tag kube.*
-        Mem_Buf_Limit 5MB
-        Skip_Long_Lines On
-
-    [FILTER]
-        Name kubernetes
-        Match kube.*
-        Merge_Log On
-        Keep_Log Off
-        K8S-Logging.Parser On
-        K8S-Logging.Exclude On
-
-    [OUTPUT]
-        Name opentelemetry
-        Match kube.*
-        Host localhost
-        Port 4318
-        Metrics_uri /v1/metrics
-        Logs_uri /v1/logs
-        Log_response_payload True
-        Tls Off
-
-  parsers.conf: |
-    [PARSER]
-        Name docker
-        Format json
-        Time_Key time
-        Time_Format %Y-%m-%dT%H:%M:%S.%L
-        Time_Keep On
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: adot-collector
-  namespace: fargate-container-insights
-spec:
-  selector:
-    matchLabels:
-      app: adot-collector
-  template:
-    metadata:
-      labels:
-        app: adot-collector
-    spec:
-      serviceAccountName: adot-collector
-      containers:
-      - name: adot-collector
-        image: public.ecr.aws/aws-observability/aws-otel-collector:latest
-        args:
-        - --config=/conf/adot-collector-config.yaml
-        ports:
-        - containerPort: 4317
-        - containerPort: 4318
-        volumeMounts:
-        - name: varlog
-          mountPath: /var/log
-          readOnly: true
-        - name: adot-config
-          mountPath: /conf
-      volumes:
-      - name: varlog
-        hostPath:
-          path: /var/log
-      - name: adot-config
-        configMap:
-          name: adot-collector-config
-      tolerations:
-      - key: "eks.amazonaws.com/compute-type"
-        operator: "Equal"
-        value: "fargate"
-        effect: "NoSchedule"
+          receivers: [otlp]
+          processors: [batch, filter]
+          exporters: [awsemf]
