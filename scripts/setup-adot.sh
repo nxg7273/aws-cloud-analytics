@@ -46,6 +46,14 @@ delete_iam_policy() {
     EXISTING_POLICY_ARN=$(aws iam list-policies --query "Policies[?PolicyName=='$POLICY_NAME'].Arn" --output text)
     if [ ! -z "$EXISTING_POLICY_ARN" ]; then
         if ! is_terraform_managed "$EXISTING_POLICY_ARN"; then
+            # List and detach all role attachments
+            echo "Detaching policy from attached roles..."
+            ATTACHED_ROLES=$(aws iam list-entities-for-policy --policy-arn $EXISTING_POLICY_ARN --entity-filter Role --query 'PolicyRoles[*].RoleName' --output text)
+            for role in $ATTACHED_ROLES; do
+                echo "Detaching policy from role: $role"
+                aws iam detach-role-policy --role-name $role --policy-arn $EXISTING_POLICY_ARN || true
+            done
+            # Delete the policy after detaching
             aws iam delete-policy --policy-arn $EXISTING_POLICY_ARN || true
         else
             echo "Skipping deletion of Terraform-managed policy: $EXISTING_POLICY_ARN"
