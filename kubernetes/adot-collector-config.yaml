@@ -16,23 +16,30 @@ data:
       batch:
         timeout: 1s
         send_batch_size: 1024
-      error_filter:
-        logs:
-          strict_match: false
-          include:
-            match_type: regexp
-            expressions:
-              - value: ".*(OperationalError|Name or service not known|Connection reset by peer).*"
-      namespace_filter:
+      filterprocessor/namespace_bioapptives:
         logs:
           include:
-            match_type: regexp
-            resource_attributes:
+            match_type: strict
+            attributes:
               - key: k8s.namespace.name
-                value: "(bioapptives|marcador)"
+                value: bioapptives
+      filterprocessor/namespace_marcador:
+        logs:
+          include:
+            match_type: strict
+            attributes:
+              - key: k8s.namespace.name
+                value: marcador
+      filterprocessor/errors:
+        logs:
+          include:
+            match_type: regexp
+            attributes:
+              - key: message
+                value: ".*(OperationalError|Name or service not known|Connection reset by peer).*"
     exporters:
       awsemf/bioapptives:
-        region: ''
+        region: '${AWS_REGION}'
         log_group_name: '/aws/eks/${CLUSTER_NAME}/bioapptives'
         log_stream_name: '${POD_NAME}'
         namespace: 'Bioapptives'
@@ -43,7 +50,7 @@ data:
             metric_name_selectors:
               - ErrorCount
       awsemf/marcador:
-        region: ''
+        region: '${AWS_REGION}'
         log_group_name: '/aws/eks/${CLUSTER_NAME}/marcador'
         log_stream_name: '${POD_NAME}'
         namespace: 'Marcador'
@@ -57,17 +64,17 @@ data:
       pipelines:
         logs/bioapptives:
           receivers: [otlp]
-          processors: [batch, namespace_filter]
+          processors: [batch, filterprocessor/namespace_bioapptives]
           exporters: [awsemf/bioapptives]
         logs/bioapptives_errors:
           receivers: [otlp]
-          processors: [batch, namespace_filter, error_filter]
+          processors: [batch, filterprocessor/namespace_bioapptives, filterprocessor/errors]
           exporters: [awsemf/bioapptives]
         logs/marcador:
           receivers: [otlp]
-          processors: [batch, namespace_filter]
+          processors: [batch, filterprocessor/namespace_marcador]
           exporters: [awsemf/marcador]
         logs/marcador_errors:
           receivers: [otlp]
-          processors: [batch, namespace_filter, error_filter]
+          processors: [batch, filterprocessor/namespace_marcador, filterprocessor/errors]
           exporters: [awsemf/marcador]

@@ -1,174 +1,105 @@
-# EKS Monitoring Project
+# AWS Cloud Analytics
 
-This project sets up a detailed tracking system for monitoring metrics of all pods in an Amazon EKS cluster, including their names, services within the pods, as well as CPU and memory usage. It also integrates AWS CloudWatch and AWS Distro for OpenTelemetry for comprehensive monitoring.
+This repository contains configurations for AWS Distro for OpenTelemetry (ADOT) collector and Fluent Bit to collect and monitor logs from EKS clusters.
 
-## Prerequisites
+## Overview
 
-- AWS CLI configured with appropriate credentials
-- Terraform installed
-- kubectl installed
-- Docker installed
-- Python 3.x with boto3, pandas, and matplotlib libraries
+The setup includes:
+- ADOT collector deployment in the fargate-container-insights namespace
+- Log collection from bioapptives and marcador namespaces
+- Error pattern monitoring and alerting
+- CloudWatch integration
+- SNS notifications for alerts
+
+## Components
+
+### ADOT Collector
+- Deployed as a StatefulSet in the fargate-container-insights namespace
+- Configured with OpenTelemetry protocol support (gRPC and HTTP)
+- Resource limits: 1 CPU, 2Gi memory
+
+### Log Collection
+Collects logs from two namespaces:
+1. bioapptives namespace
+2. marcador namespace
+
+### Error Pattern Monitoring
+Monitors for specific error patterns:
+- "kombu.exceptions.OperationalError: [Errno -2] Name or service not known"
+- "consumer: Cannot connect to amqp://guest:**@rabbitmq-0.rabbitmq.bioapptives.svc.cluster.local:5672//"
+- "ConnectionError due to connection reset by peer"
+
+### CloudWatch Integration
+- Log groups:
+  - /aws/eks/${CLUSTER_NAME}/bioapptives
+  - /aws/eks/${CLUSTER_NAME}/marcador
+- Metric filters for error patterns
+- CloudWatch alarms for error monitoring
+
+### SNS Notifications
+- Topic: adot-alerts
+- Email notifications configured for: anastasia.nayden@iff.com
+- Alerts triggered when error patterns are detected
 
 ## Setup Instructions
 
-1. Configure AWS CLI:
-   ```
-   aws configure
-   ```
+1. Clone the repository
+2. Configure environment variables:
+   - CLUSTER_NAME: Your EKS cluster name
+   - REGION: AWS region
+   - POD_NAME: ADOT collector pod name
 
-2. Initialize Terraform:
-   ```
-   cd terraform
-   terraform init
-   ```
-
-3. Apply Terraform configuration:
-   ```
-   terraform apply
-   ```
-
-4. Configure kubectl to use the new EKS cluster:
-   ```
-   aws eks --region $(terraform output -raw region) update-kubeconfig --name $(terraform output -raw cluster_name)
-   ```
-
-5. Deploy ADOT Collector for bioapptives namespace:
+3. Run the setup script:
    ```bash
-   # Make the setup script executable
-   chmod +x scripts/setup-adot.sh
-
-   # Set required environment variables
-   export CLUSTER_NAME="your-cluster-name"  # Required: Set this to your EKS cluster name
-   export REGION="us-east-1"                # Optional: Defaults to us-east-1
-
-   # Run the setup script
    ./scripts/setup-adot.sh
    ```
 
-6. Verify deployment:
-   ```bash
-   kubectl get pods -n bioapptives
-   kubectl get services -n bioapptives
-   ```
+## Configuration Details
 
-7. Confirm SNS subscription:
-   Check your email (anastasia.nayden@iff.com) for the SNS subscription confirmation.
+### ADOT Collector Configuration
+The ADOT collector is configured with:
+- Receivers: OTLP (gRPC and HTTP)
+- Processors:
+  - Batch processor
+  - Filter processors for namespace-specific logs
+  - Filter processors for error pattern detection
+- Exporters:
+  - CloudWatch Metrics (awsemf)
+  - Separate exporters for each namespace
 
-## Dashboard Usage Guide
+### Log Pipeline Configuration
+Four separate pipelines are configured:
+1. bioapptives logs pipeline
+2. bioapptives error monitoring pipeline
+3. marcador logs pipeline
+4. marcador error monitoring pipeline
 
-1. Access the AWS CloudWatch console:
-   - Go to the AWS Management Console
-   - Navigate to CloudWatch service
+## Monitoring and Alerting
 
-2. Find the "ContainerInsights" dashboard:
-   - In the CloudWatch sidebar, click on "Dashboards"
-   - Look for a dashboard named "ContainerInsights-protein-engineering-cluster-new"
+### CloudWatch Metrics
+- Namespace-specific metrics
+- Error count metrics
+- Custom metric declarations for monitoring
 
-3. Interpreting the dashboard:
-   - CPU Utilization: Shows the CPU usage across all pods
-   - Memory Utilization: Displays memory consumption of pods
-   - Network RX/TX: Indicates network traffic in and out of pods
-   - Pod Status: Provides an overview of running, pending, and failed pods
+### Alerts
+- SNS notifications for error patterns
+- Email alerts to anastasia.nayden@iff.com
+- Configurable alert thresholds
 
-4. Using custom metrics:
-   - Click on "Add widget" to create custom visualizations
-   - Select "Metrics" as the widget type
-   - Choose "ContainerInsights" as the namespace
-   - Pick desired metrics and customize the graph as needed
+## Prerequisites
+- AWS CLI configured with appropriate permissions
+- kubectl access to the EKS cluster
+- Necessary IAM roles and policies
+- eksctl installed
 
-5. Setting up alarms:
-   - From the dashboard, click on a metric graph
-   - Select "Create alarm" from the Actions menu
-   - Configure threshold and notification settings
+## Notes
+- The bioapptives and marcador namespaces must exist in the cluster
+- ADOT collector uses AWS OpenTelemetry v0.32.0 syntax
+- All logs from both namespaces are collected, not just errors
+- Error monitoring is maintained separately from general log collection
 
 ## Troubleshooting
-
-If you encounter issues, please check the following:
-
-1. AWS CLI Configuration:
-   ```
-   aws configure list
-   aws sts get-caller-identity
-   ```
-   Ensure your credentials are correct and have necessary permissions.
-
-2. Terraform State:
-   ```
-   terraform show
-   ```
-   Verify that all resources are properly created.
-
-3. EKS Cluster Status:
-   ```
-   aws eks describe-cluster --name protein-engineering-cluster-new
-   ```
-   Check if the cluster is active and properly configured.
-
-4. ADOT Collector Logs:
-    ```bash
-    kubectl logs -l app=adot-collector -n bioapptives
-    ```
-    Look for any error messages or configuration issues in the logs.
-
-    To verify error pattern monitoring:
-    ```bash
-    # Check CloudWatch alarms status
-    aws cloudwatch describe-alarms \
-      --alarm-names BioapptivesOperationalError BioapptivesConnectionError
-
-    # Check SNS subscriptions
-    aws sns list-subscriptions
-    ```
-
-5. CloudWatch Logs:
-   - Check the CloudWatch Log groups for any error messages
-   - Verify that metrics are being received in the ContainerInsights namespace
-
-6. IAM Roles and Policies:
-   - Ensure that the EKS cluster and Fargate profiles have the correct IAM roles attached
-   - Verify that the roles have the necessary permissions for CloudWatch and ADOT
-
-For more detailed troubleshooting, refer to the AWS EKS and ADOT documentation.
-
-## Best Practices for Ongoing Management
-
-1. Regular Updates:
-   - Keep AWS CLI, Terraform, and kubectl up to date
-   - Regularly update the ADOT Collector to the latest version
-
-2. Monitoring and Alerting:
-    - CloudWatch Alarms are configured for specific error patterns in bioapptives namespace:
-      - OperationalError monitoring
-      - Connection reset errors
-      - AMQP connection issues
-    - SNS notifications are sent to anastasia.nayden@iff.com
-    - Error patterns monitored include:
-      ```
-      kombu.exceptions.OperationalError: [Errno -2] Name or service not known
-      consumer: Cannot connect to amqp://guest:**@rabbitmq-0.rabbitmq.bioapptives.svc.cluster.local:5672//
-      ConnectionError due to connection reset by peer
-      ```
-
-3. Cost Optimization:
-   - Regularly review and optimize your EKS cluster size
-   - Use Fargate profiles efficiently to manage compute resources
-
-4. Security:
-   - Rotate AWS access keys regularly
-   - Use IAM roles with least privilege principle
-   - Keep your EKS cluster updated with the latest security patches
-
-5. Backup and Disaster Recovery:
-   - Regularly backup your Terraform state
-   - Consider using multiple availability zones for high availability
-
-6. Performance Tuning:
-   - Use the correlation script (correlate_metrics.py) to identify performance bottlenecks
-   - Adjust resource allocation based on observed metrics
-
-7. Documentation:
-   - Keep this README and other documentation up to date
-   - Document any custom configurations or scripts added to the project
-
-By following these best practices, you can ensure the reliability, security, and efficiency of your EKS monitoring system.
+- Check ADOT collector logs in the fargate-container-insights namespace
+- Verify CloudWatch log groups are receiving logs
+- Confirm SNS topic subscription
+- Check IAM roles and permissions
