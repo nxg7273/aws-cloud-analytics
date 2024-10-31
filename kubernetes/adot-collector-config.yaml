@@ -26,12 +26,12 @@ data:
       namespace_filter:
         logs:
           include:
-            match_type: strict
+            match_type: regexp
             resource_attributes:
               - key: k8s.namespace.name
-                value: bioapptives
+                value: "(bioapptives|marcador)"
     exporters:
-      awsemf:
+      awsemf/bioapptives:
         region: ''
         log_group_name: '/aws/eks/${CLUSTER_NAME}/bioapptives'
         log_stream_name: '${POD_NAME}'
@@ -42,13 +42,32 @@ data:
           - dimensions: [[Namespace]]
             metric_name_selectors:
               - ErrorCount
+      awsemf/marcador:
+        region: ''
+        log_group_name: '/aws/eks/${CLUSTER_NAME}/marcador'
+        log_stream_name: '${POD_NAME}'
+        namespace: 'Marcador'
+        dimension_rollup_option: NoDimensionRollup
+        log_retention: 30
+        metric_declarations:
+          - dimensions: [[Namespace]]
+            metric_name_selectors:
+              - ErrorCount
     service:
       pipelines:
-        logs/all:
+        logs/bioapptives:
           receivers: [otlp]
           processors: [batch, namespace_filter]
-          exporters: [awsemf]
-        logs/errors:
+          exporters: [awsemf/bioapptives]
+        logs/bioapptives_errors:
           receivers: [otlp]
           processors: [batch, namespace_filter, error_filter]
-          exporters: [awsemf]
+          exporters: [awsemf/bioapptives]
+        logs/marcador:
+          receivers: [otlp]
+          processors: [batch, namespace_filter]
+          exporters: [awsemf/marcador]
+        logs/marcador_errors:
+          receivers: [otlp]
+          processors: [batch, namespace_filter, error_filter]
+          exporters: [awsemf/marcador]
