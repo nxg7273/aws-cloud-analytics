@@ -16,24 +16,39 @@ data:
       batch:
         timeout: 1s
         send_batch_size: 1024
-      filter:
+      error_filter:
         logs:
           strict_match: false
           include:
             match_type: regexp
             expressions:
               - value: ".*(OperationalError|Name or service not known|Connection reset by peer).*"
+      namespace_filter:
+        logs:
+          include:
+            match_type: strict
+            resource_attributes:
+              - key: k8s.namespace.name
+                value: bioapptives
     exporters:
       awsemf:
         region: ''
-        log_group_name: '/aws/eks//bioapptives'
-        log_stream_name: ''
+        log_group_name: '/aws/eks/${CLUSTER_NAME}/bioapptives'
+        log_stream_name: '${POD_NAME}'
         namespace: 'Bioapptives'
         dimension_rollup_option: NoDimensionRollup
         log_retention: 30
+        metric_declarations:
+          - dimensions: [[Namespace]]
+            metric_name_selectors:
+              - ErrorCount
     service:
       pipelines:
-        logs:
+        logs/all:
           receivers: [otlp]
-          processors: [batch, filter]
+          processors: [batch, namespace_filter]
+          exporters: [awsemf]
+        logs/errors:
+          receivers: [otlp]
+          processors: [batch, namespace_filter, error_filter]
           exporters: [awsemf]
