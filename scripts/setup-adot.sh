@@ -15,17 +15,11 @@ check_env_vars() {
 
 # Function to create Fargate profiles
 create_fargate_profiles() {
-  echo "Creating Fargate profiles..."
+  echo "Creating Fargate profile for ADOT collector..."
   eksctl create fargateprofile \
     --cluster ${CLUSTER_NAME} \
     --name fp-adot-collector \
     --namespace fargate-container-insights \
-    --region ${REGION} || true
-
-  eksctl create fargateprofile \
-    --cluster ${CLUSTER_NAME} \
-    --name fp-bioapptives \
-    --namespace bioapptives \
     --region ${REGION} || true
 }
 
